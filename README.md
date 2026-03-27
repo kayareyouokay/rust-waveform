@@ -1,6 +1,6 @@
 # waveform
 
-Rust rewrite of the original `vulkan-waveform` idea, rebuilt as a fast terminal waveform explorer instead of a fragile Windows/Vulkan prototype.
+Rust rewrite of the original [vulakn-waveform]([https://example.com](https://github.com/The-Mazeman/vulkan-waveform)) idea, rebuilt as a fast terminal waveform explorer instead of a fragile Windows/Vulkan prototype.
 
 ## What changed
 
