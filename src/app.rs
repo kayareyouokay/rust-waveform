@@ -1,6 +1,6 @@
 use crate::audio::Waveform;
 use crate::cli::{self, Config, ParseOutcome};
-use crate::render::{render_frame, ViewState};
+use crate::render::{ViewState, render_frame};
 use crate::terminal::{Key, Session};
 use std::io::{self, IsTerminal, Write};
 
@@ -21,7 +21,10 @@ fn run_with_config(config: Config) -> Result<(), String> {
         let width = config.width.unwrap_or(120);
         let height = config.height.unwrap_or(32);
         let state = ViewState::new(waveform.frame_count);
-        print!("{}", render_frame(&waveform, &state, width, height, config.color));
+        print!(
+            "{}",
+            render_frame(&waveform, &state, width, height, config.color)
+        );
         io::stdout()
             .flush()
             .map_err(|error| format!("failed to flush stdout: {error}"))?;
@@ -92,7 +95,8 @@ fn pan_right(state: &mut ViewState, total_frames: usize, ratio: f32) {
 
 fn zoom(state: &mut ViewState, total_frames: usize, factor: f32) {
     let center = state.start_frame.saturating_add(state.frame_span / 2);
-    let next_span = ((state.frame_span as f32 * factor).round() as usize).clamp(64, total_frames.max(64));
+    let next_span =
+        ((state.frame_span as f32 * factor).round() as usize).clamp(64, total_frames.max(64));
     state.frame_span = next_span.min(total_frames.max(1));
     state.start_frame = center.saturating_sub(state.frame_span / 2);
     state.clamp_to(total_frames);

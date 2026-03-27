@@ -95,7 +95,11 @@ pub fn render_frame(
             &label,
         );
         for line in plot {
-            lines.push(colorize(&line, color, if panel_index % 2 == 0 { "0;32" } else { "0;36" }));
+            lines.push(colorize(
+                &line,
+                color,
+                if panel_index % 2 == 0 { "0;32" } else { "0;36" },
+            ));
         }
     }
 
@@ -124,7 +128,11 @@ pub fn render_frame(
     format!("{}\n", lines.join("\n"))
 }
 
-fn visible_channels(waveform: &Waveform, focus_channel: Option<usize>, plot_rows: usize) -> Vec<usize> {
+fn visible_channels(
+    waveform: &Waveform,
+    focus_channel: Option<usize>,
+    plot_rows: usize,
+) -> Vec<usize> {
     if let Some(channel) = focus_channel {
         return vec![channel.min(waveform.channels.len().saturating_sub(1))];
     }
@@ -222,7 +230,12 @@ fn intensity_glyph(intensity: f32, clipped: bool) -> u8 {
     PALETTE[index.min(PALETTE.len().saturating_sub(1))]
 }
 
-fn frame_range_for_column(start: usize, end: usize, column: usize, width: usize) -> std::ops::Range<usize> {
+fn frame_range_for_column(
+    start: usize,
+    end: usize,
+    column: usize,
+    width: usize,
+) -> std::ops::Range<usize> {
     let span = end.saturating_sub(start).max(1);
     let range_start = start + (span * column) / width.max(1);
     let mut range_end = start + (span * (column + 1)) / width.max(1);
@@ -257,7 +270,11 @@ fn colorize(line: &str, enabled: bool, code: &str) -> String {
 fn format_range(start_frame: usize, frame_span: usize, sample_rate: u32) -> String {
     let start_seconds = start_frame as f64 / sample_rate.max(1) as f64;
     let end_seconds = start_seconds + frame_span as f64 / sample_rate.max(1) as f64;
-    format!("{} -> {}", format_seconds(start_seconds), format_seconds(end_seconds))
+    format!(
+        "{} -> {}",
+        format_seconds(start_seconds),
+        format_seconds(end_seconds)
+    )
 }
 
 fn format_seconds(seconds: f64) -> String {

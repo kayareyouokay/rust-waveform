@@ -110,7 +110,8 @@ pub struct Waveform {
 
 impl Waveform {
     pub fn load(path: &Path) -> Result<Self, String> {
-        let bytes = fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        let bytes = fs::read(path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
         parse_waveform(bytes, path)
     }
 
@@ -257,10 +258,7 @@ fn decode_channels(data: &[u8], fmt: FmtChunk) -> Result<Vec<Channel>, String> {
         }
     }
 
-    Ok(channels
-        .into_iter()
-        .map(build_channel)
-        .collect::<Vec<_>>())
+    Ok(channels.into_iter().map(build_channel).collect::<Vec<_>>())
 }
 
 fn build_channel(samples: Vec<f32>) -> Channel {
@@ -343,14 +341,13 @@ fn decode_sample(bytes: &[u8], audio_format: u16, bits_per_sample: u16) -> Resul
             let value = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], sign]);
             value as f32 / 8_388_608.0
         }
-        (PCM_FORMAT, 32) => i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32
-            / 2_147_483_648.0,
-        (FLOAT_FORMAT, 32) => f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-        (FLOAT_FORMAT, 64) => {
-            f64::from_le_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            ]) as f32
+        (PCM_FORMAT, 32) => {
+            i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32 / 2_147_483_648.0
         }
+        (FLOAT_FORMAT, 32) => f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+        (FLOAT_FORMAT, 64) => f64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]) as f32,
         _ => return Err("unsupported sample format".to_string()),
     };
 
@@ -373,7 +370,7 @@ fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_waveform, Peak};
+    use super::{Peak, parse_waveform};
     use std::path::Path;
 
     #[test]

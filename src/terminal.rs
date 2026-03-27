@@ -28,7 +28,9 @@ impl Session {
         stdout
             .write_all(b"\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l")
             .map_err(|error| format!("failed to switch terminal screen: {error}"))?;
-        stdout.flush().map_err(|error| format!("failed to flush terminal: {error}"))?;
+        stdout
+            .flush()
+            .map_err(|error| format!("failed to flush terminal: {error}"))?;
 
         Ok(Self { tty, saved_mode })
     }
@@ -36,7 +38,9 @@ impl Session {
     pub fn size(&self) -> Result<(usize, usize), String> {
         let output = Command::new("stty")
             .arg("size")
-            .stdin(Stdio::from(self.tty.try_clone().map_err(|error| error.to_string())?))
+            .stdin(Stdio::from(
+                self.tty.try_clone().map_err(|error| error.to_string())?,
+            ))
             .output()
             .map_err(|error| format!("failed to query terminal size: {error}"))?;
 
@@ -96,7 +100,9 @@ impl Drop for Session {
 fn run_stty(tty: &File, args: &[&str]) -> Result<String, String> {
     let output = Command::new("stty")
         .args(args)
-        .stdin(Stdio::from(tty.try_clone().map_err(|error| error.to_string())?))
+        .stdin(Stdio::from(
+            tty.try_clone().map_err(|error| error.to_string())?,
+        ))
         .output()
         .map_err(|error| format!("failed to run stty: {error}"))?;
 
