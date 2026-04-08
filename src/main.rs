@@ -1,8 +1,8 @@
 mod app;
 mod audio;
 mod cli;
-mod render;
-mod terminal;
+mod gpu;
+mod player;
 
 use std::process::ExitCode;
 

@@ -1,24 +1,17 @@
 # waveform
 
-Rust rewrite of the original [vulakn-waveform](https://github.com/The-Mazeman/vulkan-waveform) idea, rebuilt as a fast terminal waveform explorer instead of a fragile Windows/Vulkan prototype.
+Rust rewrite of the original [vulkan-waveform](https://github.com/The-Mazeman/vulkan-waveform) idea, now rebuilt as a desktop WAV player with `iced`.
 
-## What changed
+It loads a WAV file, starts playback immediately when an audio device is available, and renders the waveform live inside the GUI. The visible waveform is processed on the GPU: the app uploads peak bins for each channel, runs a compute pass to aggregate them into screen columns, and draws the result in an `iced` shader widget with a live playhead.
 
-- Pure Rust implementation
-- No external crate dependencies
-- Fast peak-pyramid preprocessing for efficient zoom and pan
-- Interactive ASCII viewer with multi-channel support
-- Snapshot mode for piping or quick previews
-- Release profile tuned for smaller, faster binaries
+## Features
 
-## Why this is better
-
-The original project was tightly coupled to Win32 + Vulkan setup code. This version keeps the core goal, viewing WAV waveforms, but removes the heavyweight platform stack and replaces it with:
-
-- Manual WAV parsing for PCM and float WAV files
-- Multi-resolution min/max aggregation inspired by waveform mipmaps
-- O(columns) redraw behavior for large files after preprocessing
-- A cleaner architecture that is much easier to extend
+- `iced` desktop GUI
+- Live WAV playback through `rodio`
+- GPU-backed waveform aggregation and rendering
+- Multi-channel display with live playhead, zoom, pan, and follow mode
+- Transport controls for skip, looping, volume, and playback speed
+- Manual WAV decoding for PCM and float RIFF/WAVE files
 
 ## Usage
 
@@ -26,31 +19,33 @@ The original project was tightly coupled to Win32 + Vulkan setup code. This vers
 cargo run --release -- path/to/file.wav
 ```
 
-Print a single static frame:
+Show CLI help:
 
 ```bash
-cargo run --release -- path/to/file.wav --snapshot
+cargo run -- --help
 ```
-
-Optional flags:
-
-- `--width <cols>`
-- `--height <rows>`
-- `--no-color`
 
 ## Controls
 
-- `h` / `l`: pan left or right
-- `H` / `L`: pan faster
-- `+` / `-`: zoom in or out
-- `[` / `]`: adjust vertical gain
-- `c`: cycle channel focus
-- `g`: toggle grid
-- `?`: toggle help
-- `0`: fit the full file
-- `q`: quit
+- `Play` / `Pause`: toggle playback
+- `Restart`: jump back to the beginning
+- `<< 5s` / `5s >>`: seek in fixed steps
+- `Loop` and `Follow`: toggle looping and automatic viewport following
+- `Gain`, `Volume`, `Speed`: adjust waveform scale and playback behavior
+- Left-drag on the waveform: seek
+- Right-drag on the waveform: pan the visible time window
+- Mouse wheel on the waveform: zoom around the cursor
 
-Arrow left/right also work for panning.
+Keyboard shortcuts:
+
+- `Space`: play/pause
+- `Home`: restart
+- `Left` / `Right`: skip backward or forward 5 seconds
+- `Shift` + `Left` / `Right` or `[` / `]`: pan viewport
+- `Up` / `Down` or `+` / `-`: zoom
+- `0`: fit the whole file
+- `F`: toggle follow-playhead
+- `L`: toggle looping
 
 ## Supported WAV formats
 
@@ -61,8 +56,3 @@ Arrow left/right also work for panning.
 - IEEE float 32-bit
 - IEEE float 64-bit
 - Basic `WAVE_FORMAT_EXTENSIBLE` variants that map back to PCM or float
-
-## Notes
-
-- Interactive mode expects a Unix-like terminal with `stty` available.
-- If stdin/stdout is not a terminal, the app falls back to a one-shot snapshot render.

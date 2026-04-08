@@ -1,5 +1,5 @@
+use bytemuck::{Pod, Zeroable};
 use std::fs;
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 const RIFF_TAG: &[u8; 4] = b"RIFF";
@@ -11,8 +11,7 @@ const PCM_FORMAT: u16 = 0x0001;
 const FLOAT_FORMAT: u16 = 0x0003;
 const EXTENSIBLE_FORMAT: u16 = 0xFFFE;
 
-const RAW_SCAN_THRESHOLD: usize = 2_048;
-const BASE_CHUNK_SIZE: usize = 32;
+pub const BASE_CHUNK_SIZE: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Peak {
@@ -55,6 +54,24 @@ impl Peak {
             self.sum_abs / self.sample_count as f32
         }
     }
+
+    fn into_gpu(self) -> GpuPeak {
+        GpuPeak {
+            min: self.min,
+            max: self.max,
+            avg_abs: self.average_abs(),
+            _pad: 0.0,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
+pub struct GpuPeak {
+    pub min: f32,
+    pub max: f32,
+    pub avg_abs: f32,
+    pub _pad: f32,
 }
 
 pub struct PeakLevel {
@@ -70,33 +87,19 @@ pub struct Channel {
 }
 
 impl Channel {
-    pub fn summarize(&self, range: Range<usize>) -> Peak {
-        if self.samples.is_empty() {
-            return Peak::default();
+    fn gpu_peaks(&self) -> (usize, Vec<GpuPeak>) {
+        if let Some(level) = self.levels.first() {
+            let peaks = level.peaks.iter().copied().map(Peak::into_gpu).collect();
+            return (level.chunk_size, peaks);
         }
 
-        let start = range.start.min(self.samples.len().saturating_sub(1));
-        let end = range.end.max(start + 1).min(self.samples.len());
-        let span = end - start;
+        let fallback = if self.samples.is_empty() {
+            Peak::default()
+        } else {
+            summarize_samples(&self.samples)
+        };
 
-        if span <= RAW_SCAN_THRESHOLD || self.levels.is_empty() {
-            return summarize_samples(&self.samples[start..end]);
-        }
-
-        let target_chunk = (span / 4).max(BASE_CHUNK_SIZE);
-        let level = self
-            .levels
-            .iter()
-            .rev()
-            .find(|level| level.chunk_size <= target_chunk)
-            .unwrap_or(&self.levels[0]);
-
-        let start_bucket = start / level.chunk_size;
-        let end_bucket = (end.saturating_sub(1) / level.chunk_size) + 1;
-        level.peaks[start_bucket..end_bucket]
-            .iter()
-            .copied()
-            .fold(Peak::default(), Peak::merge)
+        (self.samples.len().max(1), vec![fallback.into_gpu()])
     }
 }
 
@@ -106,6 +109,10 @@ pub struct Waveform {
     pub sample_rate: u32,
     pub bits_per_sample: u16,
     pub frame_count: usize,
+    pub interleaved_samples: Vec<f32>,
+    pub peak_chunk_size: usize,
+    pub peak_bin_count: usize,
+    pub gpu_peaks: Vec<GpuPeak>,
 }
 
 impl Waveform {
@@ -117,6 +124,10 @@ impl Waveform {
 
     pub fn duration_seconds(&self) -> f64 {
         self.frame_count as f64 / self.sample_rate.max(1) as f64
+    }
+
+    pub fn channel_count(&self) -> u16 {
+        self.channels.len().min(u16::MAX as usize) as u16
     }
 
     pub fn file_name(&self) -> String {
@@ -171,7 +182,10 @@ fn parse_waveform(bytes: Vec<u8>, path: &Path) -> Result<Waveform, String> {
     let fmt = fmt.ok_or("missing fmt chunk")?;
     let data_range = data_range.ok_or("missing data chunk")?;
     let frame_count = data_range.len() / fmt.block_align;
-    let channels = decode_channels(&bytes[data_range.clone()], fmt)?;
+    let channels = decode_channels(&bytes[data_range], fmt)?;
+
+    let interleaved_samples = interleave_channels(&channels, frame_count);
+    let (peak_chunk_size, peak_bin_count, gpu_peaks) = collect_gpu_peaks(&channels);
 
     Ok(Waveform {
         path: path.to_path_buf(),
@@ -179,6 +193,10 @@ fn parse_waveform(bytes: Vec<u8>, path: &Path) -> Result<Waveform, String> {
         sample_rate: fmt.sample_rate,
         bits_per_sample: fmt.bits_per_sample,
         frame_count,
+        interleaved_samples,
+        peak_chunk_size,
+        peak_bin_count,
+        gpu_peaks,
     })
 }
 
@@ -236,7 +254,7 @@ fn decode_channels(data: &[u8], fmt: FmtChunk) -> Result<Vec<Channel>, String> {
     if fmt.block_align != bytes_per_sample * fmt.channel_count {
         return Err("unsupported block alignment for the declared sample format".to_string());
     }
-    if data.len() % fmt.block_align != 0 {
+    if !data.len().is_multiple_of(fmt.block_align) {
         return Err("data chunk is not aligned to whole audio frames".to_string());
     }
 
@@ -332,6 +350,53 @@ fn summarize_samples(samples: &[f32]) -> Peak {
         .fold(Peak::default(), Peak::merge)
 }
 
+fn interleave_channels(channels: &[Channel], frame_count: usize) -> Vec<f32> {
+    let mut interleaved = Vec::with_capacity(frame_count * channels.len());
+
+    for frame in 0..frame_count {
+        for channel in channels {
+            interleaved.push(channel.samples[frame]);
+        }
+    }
+
+    interleaved
+}
+
+fn collect_gpu_peaks(channels: &[Channel]) -> (usize, usize, Vec<GpuPeak>) {
+    let mut peak_chunk_size = 1usize;
+    let mut peak_bin_count = 0usize;
+    let mut gpu_peaks = Vec::new();
+
+    for channel in channels {
+        let (chunk_size, channel_peaks) = channel.gpu_peaks();
+        peak_chunk_size = peak_chunk_size.max(chunk_size);
+        peak_bin_count = peak_bin_count.max(channel_peaks.len());
+        gpu_peaks.extend(channel_peaks);
+    }
+
+    if peak_bin_count == 0 {
+        return (1, 1, vec![GpuPeak::default()]);
+    }
+
+    if channels
+        .iter()
+        .any(|channel| channel.gpu_peaks().1.len() != peak_bin_count)
+    {
+        let mut padded = Vec::with_capacity(channels.len() * peak_bin_count);
+        for channel in channels {
+            let (_, peaks) = channel.gpu_peaks();
+            padded.extend(peaks.iter().copied());
+            padded.extend(std::iter::repeat_n(
+                peaks.last().copied().unwrap_or_default(),
+                peak_bin_count.saturating_sub(peaks.len()),
+            ));
+        }
+        gpu_peaks = padded;
+    }
+
+    (peak_chunk_size, peak_bin_count, gpu_peaks)
+}
+
 fn decode_sample(bytes: &[u8], audio_format: u16, bits_per_sample: u16) -> Result<f32, String> {
     let sample = match (audio_format, bits_per_sample) {
         (PCM_FORMAT, 8) => (bytes[0] as f32 - 128.0) / 128.0,
@@ -370,7 +435,7 @@ fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Peak, parse_waveform};
+    use super::{BASE_CHUNK_SIZE, Peak, parse_waveform};
     use std::path::Path;
 
     #[test]
@@ -382,16 +447,22 @@ mod tests {
         assert_eq!(waveform.sample_rate, 48_000);
         assert_eq!(waveform.frame_count, 4);
         assert!(waveform.channels[0].peak_abs > 0.49);
+        assert_eq!(waveform.interleaved_samples.len(), 4);
+        assert_eq!(waveform.peak_bin_count, 1);
     }
 
     #[test]
-    fn summarizer_uses_peak_levels() {
-        let bytes = wav_bytes_pcm16(&[0, 1_000, -2_000, 3_000, -4_000, 5_000, -6_000, 7_000]);
+    fn exports_peak_bins_for_gpu() {
+        let sample_count = BASE_CHUNK_SIZE * 4;
+        let samples = (0..sample_count)
+            .map(|index| if index % 2 == 0 { 16_000 } else { -16_000 })
+            .collect::<Vec<_>>();
+        let bytes = wav_bytes_pcm16(&samples);
         let waveform = parse_waveform(bytes, Path::new("fixture.wav")).expect("valid WAV");
-        let peak = waveform.channels[0].summarize(0..waveform.frame_count);
 
-        assert!(peak.min < -0.18);
-        assert!(peak.max > 0.21);
+        assert!(waveform.peak_bin_count >= 4);
+        assert!(waveform.gpu_peaks[0].min < -0.45);
+        assert!(waveform.gpu_peaks[0].max > 0.45);
     }
 
     fn wav_bytes_pcm16(samples: &[i16]) -> Vec<u8> {
